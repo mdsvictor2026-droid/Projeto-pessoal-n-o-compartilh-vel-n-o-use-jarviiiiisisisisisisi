@@ -3,7 +3,9 @@ jarvis-cloud/main.py — JARVIS Cloud Edition
 """
 
 from __future__ import annotations
+import threading
 
+from server import start_server
 import asyncio
 import io
 import os
@@ -20,6 +22,8 @@ from actions.weather     import get_weather
 from actions.reminder    import reminder, set_reminder_callback
 from actions.code_helper import code_helper
 from actions.gmail       import gmail_action
+
+threading.Thread(target=start_server, daemon=True).start()
 
 # ---------------------------------------------------------------------------
 # Config

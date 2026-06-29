@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>JARVIS</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#07090f;
+  --surface:rgba(255,255,255,0.04);
+  --border:rgba(255,255,255,0.07);
+  --accent:#6366f1;
+  --adim:rgba(99,102,241,0.14);
+  --text:#dde3ed;
+  --muted:#5e6a7e;
+  --green:#22c55e;
+  --gdim:rgba(34,197,94,0.12);
+  --red:#ef4444;
+}
+html,body{height:100%;background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;overflow:hidden}
+body{display:flex;flex-direction:column}
+
+/* HEADER */
+header{flex-shrink:0;display:flex;align-items:center;gap:10px;padding:12px 16px;border-bottom:1px solid var(--border);background:rgba(7,9,15,0.97)}
+.logo{font-size:14px;font-weight:700;letter-spacing:5px}
+.logo em{color:var(--accent);font-style:normal}
+.pill{display:flex;align-items:center;gap:5px;padding:3px 10px;border-radius:99px;background:var(--gdim);border:1px solid rgba(34,197,94,0.28);font-size:10px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:var(--green)}
+.dot{width:5px;height:5px;border-radius:50%;background:var(--green);animation:blink 2s infinite}
+@keyframes blink{0%,100%{opacity:1}50%{opacity:0.3}}
+.spacer{flex:1}
+.time{font-size:11px;color:var(--muted);font-variant-numeric:tabular-nums}
+
+/* QUICK TAGS */
+.quickbar{flex-shrink:0;display:flex;gap:7px;padding:10px 14px;border-bottom:1px solid var(--border);overflow-x:auto;scrollbar-width:none}
+.quickbar::-webkit-scrollbar{display:none}
+.qtag{flex-shrink:0;padding:5px 12px;border-radius:99px;background:var(--surface);border:1px solid var(--border);font-size:11px;color:var(--muted);cursor:pointer;transition:all .15s;white-space:nowrap;-webkit-tap-highlight-color:transparent}
+.qtag:active,.qtag.active{background:var(--adim);border-color:rgba(99,102,241,0.35);color:var(--accent)}
+
+/* FEED */
+main{flex:1;overflow-y:auto;padding:12px 14px;display:flex;flex-direction:column;gap:9px;-webkit-overflow-scrolling:touch}
+main::-webkit-scrollbar{width:2px}
+main::-webkit-scrollbar-thumb{background:var(--border);border-radius:2px}
+
+.msg{max-width:85%;padding:9px 13px;border-radius:14px;font-size:13.5px;line-height:1.55;animation:pop .15s ease;word-break:break-word}
+@keyframes pop{from{opacity:0;transform:translateY(3px)}}
+.msg-j{align-self:flex-start;background:var(--adim);border:1px solid rgba(99,102,241,0.18);border-bottom-left-radius:3px}
+.msg-u{align-self:flex-end;background:var(--surface);border:1px solid var(--border);border-bottom-right-radius:3px}
+.msg-sys{align-self:center;font-size:10px;color:var(--muted);padding:1px 0;background:transparent;border:none;letter-spacing:0.3px}
+.lbl{font-size:8px;font-weight:700;letter-spacing:2px;text-transform:uppercase;opacity:.4;margin-bottom:3px}
+.msg-j .lbl{color:var(--accent)}
+.msg-u .lbl{color:var(--muted);text-align:right}
+
+/* TYPING */
+.typing{align-self:flex-start;background:var(--adim);border:1px solid rgba(99,102,241,0.18);border-bottom-left-radius:3px;padding:10px 14px;border-radius:14px;display:none;margin:0 14px 4px}
+.typing.show{display:block}
+.dots span{display:inline-block;width:5px;height:5px;border-radius:50%;background:var(--accent);opacity:.4;animation:bounce .9s infinite}
+.dots span:nth-child(2){animation-delay:.2s}
+.dots span:nth-child(3){animation-delay:.4s}
+@keyframes bounce{0%,80%,100%{transform:translateY(0);opacity:.4}40%{transform:translateY(-5px);opacity:1}}
+
+/* FOOTER */
+footer{flex-shrink:0;padding:10px 12px;border-top:1px solid var(--border);background:rgba(7,9,15,0.97);display:flex;gap:7px;align-items:center;padding-bottom:max(10px, env(safe-area-inset-bottom))}
+#inp{flex:1;padding:10px 13px;background:var(--surface);border:1.5px solid var(--border);border-radius:11px;color:var(--text);font-size:13px;outline:none;transition:border-color .15s;appearance:none;-webkit-appearance:none}
+#inp:focus{border-color:var(--accent)}
+#inp::placeholder{color:var(--muted)}
+.btn-send{padding:10px 14px;border:none;border-radius:11px;background:var(--accent);color:#fff;font-size:11px;font-weight:700;letter-spacing:1px;cursor:pointer;transition:opacity .15s,transform .1s;flex-shrink:0;-webkit-tap-highlight-color:transparent}
+.btn-send:active{transform:scale(.96);opacity:.85}
+.btn-mic{padding:10px 12px;border-radius:11px;background:var(--surface);border:1px solid var(--border);color:var(--muted);font-size:15px;cursor:pointer;transition:all .15s;flex-shrink:0;line-height:1;-webkit-tap-highlight-color:transparent}
+.btn-mic:active{border-color:var(--accent);color:var(--accent)}
+.btn-mic.rec{background:rgba(239,68,68,.15);border-color:rgba(239,68,68,.4);color:var(--red);animation:mic-pulse 1s infinite}
+@keyframes mic-pulse{0%,100%{opacity:1}50%{opacity:.6}}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo"><em>J</em>ARVIS</div>
+  <div class="pill"><span class="dot"></span>Online</div>
+  <div class="spacer"></div>
+  <div class="time" id="clk">--:--</div>
+</header>
+
+<div class="quickbar">
+  <div class="qtag" onclick="quick(this,'Qual o clima agora?')">🌤 Clima</div>
+  <div class="qtag" onclick="quick(this,'Principais notícias de hoje')">📰 Notícias</div>
+  <div class="qtag" onclick="quick(this,'Leia meus emails não lidos')">📧 Emails</div>
+  <div class="qtag" onclick="quick(this,'Que horas são?')">🕐 Hora</div>
+  <div class="qtag" onclick="quick(this,'Me ajude com código Python')">💻 Código</div>
+  <div class="qtag" onclick="quick(this,'Me lembre em 30 minutos de tomar água')">⏰ Lembrete</div>
+</div>
+
+<main id="feed">
+  <div class="msg-sys">— Sessão iniciada —</div>
+  <div class="msg msg-j">
+    <div class="lbl">Jarvis</div>
+    Pronto para auxiliá-lo, senhor. Como posso ajudar?
+  </div>
+</main>
+
+<div class="typing" id="typing">
+  <div class="dots"><span></span><span></span><span></span></div>
+</div>
+
+<footer>
+  <input id="inp" placeholder="Digite um comando…" autocomplete="off" inputmode="text">
+  <button class="btn-mic" id="mic" onclick="toggleMic()" title="Voz">🎤</button>
+  <button class="btn-send" onclick="send()">ENVIAR</button>
+</footer>
+
+<script>
+// ── Relógio ───────────────────────────────────────────────────────────────────
+function clk(){
+  const n=new Date();
+  document.getElementById('clk').textContent=
+    n.getHours().toString().padStart(2,'0')+':'+n.getMinutes().toString().padStart(2,'0');
+}
+clk(); setInterval(clk,1000);
+
+// ── Telegram Web App SDK ──────────────────────────────────────────────────────
+const tg = window.Telegram?.WebApp;
+if(tg){ tg.ready(); tg.expand(); }
+
+// Pega o chat_id real do usuário Telegram
+const TG_CHAT_ID = tg?.initDataUnsafe?.user?.id
+  ? String(tg.initDataUnsafe.user.id)
+  : 'miniapp_guest';
+
+// ── Helpers DOM ───────────────────────────────────────────────────────────────
+const feed   = document.getElementById('feed');
+const typing = document.getElementById('typing');
+
+function esc(s){
+  return String(s)
+    .replace(/&/g,'&amp;')
+    .replace(/</g,'&lt;')
+    .replace(/>/g,'&gt;')
+    .replace(/\n/g,'<br>');
+}
+
+function addMsg(role,text){
+  const d=document.createElement('div');
+  if(role==='sys'){
+    d.className='msg msg-sys';
+    d.textContent=text;
+  } else {
+    d.className='msg msg-'+(role==='jarvis'?'j':'u');
+    d.innerHTML=`<div class="lbl">${role==='jarvis'?'Jarvis':'Você'}</div>${esc(text)}`;
+  }
+  feed.appendChild(d);
+  feed.scrollTop=feed.scrollHeight;
+}
+
+// ── Envio de mensagem ─────────────────────────────────────────────────────────
+async function send(){
+  const inp=document.getElementById('inp');
+  const txt=inp.value.trim();
+  if(!txt) return;
+  inp.value='';
+  addMsg('user',txt);
+  typing.classList.add('show');
+  feed.scrollTop=feed.scrollHeight;
+
+  try{
+    const res=await fetch('/miniapp/chat',{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({chat_id:TG_CHAT_ID, text:txt})
+    });
+    const data=await res.json();
+    typing.classList.remove('show');
+    addMsg('jarvis', data.reply || 'Sem resposta.');
+  } catch(e){
+    typing.classList.remove('show');
+    addMsg('sys','Erro de conexão — verifique se o servidor está online.');
+  }
+}
+
+// ── Quick tags ────────────────────────────────────────────────────────────────
+function quick(el,txt){
+  document.querySelectorAll('.qtag').forEach(q=>q.classList.remove('active'));
+  el.classList.add('active');
+  document.getElementById('inp').value=txt;
+  send();
+  setTimeout(()=>el.classList.remove('active'),1500);
+}
+
+// ── Enter para enviar ─────────────────────────────────────────────────────────
+document.getElementById('inp').addEventListener('keydown',e=>{
+  if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();send();}
+});
+
+// ── Microfone (Web Speech API) ────────────────────────────────────────────────
+let recog=null;
+function toggleMic(){
+  const btn=document.getElementById('mic');
+  if(recog){recog.stop();recog=null;btn.classList.remove('rec');btn.textContent='🎤';return;}
+  const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
+  if(!SR){addMsg('sys','Reconhecimento de voz não disponível neste dispositivo.');return;}
+  recog=new SR();
+  recog.lang='pt-BR';
+  recog.continuous=false;
+  recog.interimResults=false;
+  recog.onresult=e=>{
+    const t=e.results[0][0].transcript;
+    document.getElementById('inp').value=t;
+    send();
+  };
+  recog.onend=()=>{recog=null;btn.classList.remove('rec');btn.textContent='🎤';};
+  recog.onerror=()=>{recog=null;btn.classList.remove('rec');btn.textContent='🎤';};
+  recog.start();
+  btn.classList.add('rec');
+  btn.textContent='⏹';
+}
+</script>
+</body>
+</html>
