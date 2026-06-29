@@ -5,21 +5,22 @@ Interface exclusiva via Telegram bot. Sem UI, sem áudio, sem dependências loca
 Requires:
     pip install google-genai python-telegram-bot duckduckgo-search requests
     pip install google-auth google-auth-oauthlib google-auth-httplib2 google-api-python-client
+    pip install pydub SpeechRecognition
 """
 
 from __future__ import annotations
 
 import asyncio
+import io
 import os
 import sys
-import threading
-import time
+import tempfile
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Optional
 
-from google import genai          # type: ignore[import-not-found,attr-defined]
-from google.genai import types    # type: ignore[import-not-found,attr-defined]
+from google import genai
+from google.genai import types
 
 from actions.web_search  import web_search
 from actions.weather     import get_weather
@@ -28,7 +29,7 @@ from actions.code_helper import code_helper
 from actions.gmail       import gmail_action
 
 # ---------------------------------------------------------------------------
-# Config — lê de variáveis de ambiente
+# Config
 # ---------------------------------------------------------------------------
 
 BASE_DIR    = Path(__file__).resolve().parent
@@ -61,7 +62,7 @@ def _prompt() -> str:
 TOOLS = [
     {
         "name": "web_search",
-        "description": "Pesquisa na internet por notícias, informações atuais, fatos, preços, eventos, etc. Use sempre que precisar de informação atualizada.",
+        "description": "Pesquisa na internet por notícias, informações atuais, fatos, preços, eventos, etc.",
         "parameters": {
             "type": "OBJECT",
             "properties": {
@@ -77,7 +78,7 @@ TOOLS = [
         "parameters": {
             "type": "OBJECT",
             "properties": {
-                "city": {"type": "STRING", "description": "Nome da cidade (ex: São Paulo, Rio de Janeiro)"},
+                "city": {"type": "STRING", "description": "Nome da cidade"},
             },
             "required": ["city"]
         }
@@ -88,9 +89,9 @@ TOOLS = [
         "parameters": {
             "type": "OBJECT",
             "properties": {
-                "message": {"type": "STRING",  "description": "Texto do lembrete"},
-                "minutes": {"type": "NUMBER",  "description": "Minutos até o lembrete"},
-                "hours":   {"type": "NUMBER",  "description": "Horas até o lembrete"},
+                "message": {"type": "STRING", "description": "Texto do lembrete"},
+                "minutes": {"type": "NUMBER", "description": "Minutos até o lembrete"},
+                "hours":   {"type": "NUMBER", "description": "Horas até o lembrete"},
             },
             "required": ["message"]
         }
@@ -175,31 +176,31 @@ def _execute_tool(name: str, args: dict) -> str:
         return f"Erro na ferramenta {name}: {e}"
 
 # ---------------------------------------------------------------------------
-# Gemini handler
+# Gemini handler — texto
 # ---------------------------------------------------------------------------
 
 def process_message(chat_id: str, user_text: str) -> str:
     cfg    = _cfg()
-    client = genai.Client(api_key=cfg["gemini_api_key"])  # type: ignore[attr-defined]
+    client = genai.Client(api_key=cfg["gemini_api_key"])
 
     _add_to_history(chat_id, "user", user_text)
 
     contents = [
-        types.Content(  # type: ignore[attr-defined]
+        types.Content(
             role=turn["role"],
-            parts=[types.Part(text=p["text"]) for p in turn["parts"]]  # type: ignore[attr-defined]
+            parts=[types.Part(text=p["text"]) for p in turn["parts"]]
         )
         for turn in _get_history(chat_id)
     ]
 
-    tool_config = types.GenerateContentConfig(  # type: ignore[attr-defined]
+    tool_config = types.GenerateContentConfig(
         system_instruction=_prompt(),
-        tools=[{"function_declarations": TOOLS}],  # type: ignore[arg-type]
+        tools=[{"function_declarations": TOOLS}],
     )
 
     for _ in range(5):
         try:
-            response = client.models.generate_content(  # type: ignore[attr-defined]
+            response = client.models.generate_content(
                 model=MODEL,
                 contents=contents,
                 config=tool_config,
@@ -210,7 +211,7 @@ def process_message(chat_id: str, user_text: str) -> str:
                 return "Desculpe senhor, o limite de requisições foi atingido. Tente novamente mais tarde."
             raise
 
-        candidate = response.candidates[0] if response.candidates else None  # type: ignore[index]
+        candidate = response.candidates[0] if response.candidates else None
         if not candidate:
             break
 
@@ -231,25 +232,72 @@ def process_message(chat_id: str, user_text: str) -> str:
             fc     = part.function_call
             result = _execute_tool(fc.name, dict(fc.args))
             fn_responses.append(
-                types.Part(  # type: ignore[attr-defined]
-                    function_response=types.FunctionResponse(  # type: ignore[attr-defined]
+                types.Part(
+                    function_response=types.FunctionResponse(
                         name=fc.name,
                         response={"result": result}
                     )
                 )
             )
-        contents.append(
-            types.Content(role="user", parts=fn_responses)  # type: ignore[attr-defined]
-        )
+        contents.append(types.Content(role="user", parts=fn_responses))
 
     return "Desculpe, senhor. Não consegui processar sua solicitação."
 
 # ---------------------------------------------------------------------------
-# Telegram bot
+# Gemini handler — imagem
 # ---------------------------------------------------------------------------
 
-def _get_token() -> str:
-    return _cfg()["telegram_bot_token"]
+def process_image(chat_id: str, image_bytes: bytes, mime_type: str, caption: str = "") -> str:
+    cfg    = _cfg()
+    client = genai.Client(api_key=cfg["gemini_api_key"])
+
+    prompt_text = caption if caption else "Analise esta imagem detalhadamente e descreva o que você vê."
+
+    try:
+        response = client.models.generate_content(
+            model=MODEL,
+            contents=[
+                types.Content(parts=[
+                    types.Part(inline_data=types.Blob(mime_type=mime_type, data=image_bytes)),
+                    types.Part(text=prompt_text),
+                ])
+            ],
+            config=types.GenerateContentConfig(system_instruction=_prompt()),
+        )
+        reply = response.text or "Não consegui analisar a imagem, senhor."
+        _add_to_history(chat_id, "user", f"[Imagem enviada] {prompt_text}")
+        _add_to_history(chat_id, "model", reply)
+        return reply
+    except Exception as e:
+        return f"Erro ao processar imagem: {e}"
+
+# ---------------------------------------------------------------------------
+# Transcrição de voz
+# ---------------------------------------------------------------------------
+
+def transcribe_audio(audio_bytes: bytes) -> str:
+    """Transcreve áudio usando a própria API do Gemini."""
+    try:
+        cfg    = _cfg()
+        client = genai.Client(api_key=cfg["gemini_api_key"])
+
+        response = client.models.generate_content(
+            model=MODEL,
+            contents=[
+                types.Content(parts=[
+                    types.Part(inline_data=types.Blob(mime_type="audio/ogg", data=audio_bytes)),
+                    types.Part(text="Transcreva exatamente o que foi dito neste áudio. Retorne apenas a transcrição, sem comentários adicionais."),
+                ])
+            ],
+        )
+        return response.text.strip() if response.text else ""
+    except Exception as e:
+        print(f"[Voice] Erro na transcrição: {e}")
+        return ""
+
+# ---------------------------------------------------------------------------
+# Telegram bot
+# ---------------------------------------------------------------------------
 
 _bot_ref: Optional[Any] = None
 _owner_chat_id: Optional[str] = None
@@ -276,40 +324,101 @@ def run_bot() -> None:
         print("❌ python-telegram-bot não instalado.")
         sys.exit(1)
 
-    token = _get_token()
+    token = _cfg()["telegram_bot_token"]
     _owner_chat_id = _cfg().get("telegram_chat_id") or None
 
     set_reminder_callback(_send_to_telegram)
 
-    async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         global _owner_chat_id
         if not update.message or not update.message.text:
             return
 
-        chat_id = str(update.effective_chat.id)  # type: ignore[union-attr]
+        chat_id = str(update.effective_chat.id)
         if not _owner_chat_id:
             _owner_chat_id = chat_id
-            print(f"[Telegram] 💾 Chat ID detectado: {chat_id}")
 
         user_text = update.message.text
         sender    = update.message.from_user.first_name if update.message.from_user else "?"
         print(f"[Telegram] 📨 {sender}: {user_text!r}")
 
         await context.bot.send_chat_action(chat_id=chat_id, action="typing")
-
         loop  = asyncio.get_running_loop()
         reply = await loop.run_in_executor(None, process_message, chat_id, user_text)
 
         if reply:
             for i in range(0, len(reply), 4000):
                 await update.message.reply_text(reply[i:i+4000])
-            print(f"[Telegram] 📤 Replied: {reply[:80]}")
+
+    async def handle_image(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        global _owner_chat_id
+        if not update.message:
+            return
+
+        chat_id = str(update.effective_chat.id)
+        if not _owner_chat_id:
+            _owner_chat_id = chat_id
+
+        caption = update.message.caption or ""
+        await context.bot.send_chat_action(chat_id=chat_id, action="typing")
+
+        # Pega a foto em maior resolução
+        photo = update.message.photo[-1]
+        file  = await context.bot.get_file(photo.file_id)
+        buf   = io.BytesIO()
+        await file.download_to_memory(buf)
+        image_bytes = buf.getvalue()
+
+        print(f"[Telegram] 🖼️ Imagem recebida ({len(image_bytes)} bytes)")
+
+        loop  = asyncio.get_running_loop()
+        reply = await loop.run_in_executor(None, process_image, chat_id, image_bytes, "image/jpeg", caption)
+
+        if reply:
+            for i in range(0, len(reply), 4000):
+                await update.message.reply_text(reply[i:i+4000])
+
+    async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        global _owner_chat_id
+        if not update.message:
+            return
+
+        chat_id = str(update.effective_chat.id)
+        if not _owner_chat_id:
+            _owner_chat_id = chat_id
+
+        await context.bot.send_chat_action(chat_id=chat_id, action="typing")
+
+        voice = update.message.voice
+        file  = await context.bot.get_file(voice.file_id)
+        buf   = io.BytesIO()
+        await file.download_to_memory(buf)
+        audio_bytes = buf.getvalue()
+
+        print(f"[Telegram] 🎤 Áudio recebido ({len(audio_bytes)} bytes)")
+
+        loop        = asyncio.get_running_loop()
+        transcribed = await loop.run_in_executor(None, transcribe_audio, audio_bytes)
+
+        if not transcribed:
+            await update.message.reply_text("Não consegui entender o áudio, senhor. Poderia repetir?")
+            return
+
+        print(f"[Telegram] 🎤 Transcrito: {transcribed!r}")
+        await update.message.reply_text(f"_{transcribed}_", parse_mode="Markdown")
+
+        reply = await loop.run_in_executor(None, process_message, chat_id, transcribed)
+        if reply:
+            for i in range(0, len(reply), 4000):
+                await update.message.reply_text(reply[i:i+4000])
 
     app = Application.builder().token(token).build()
     _bot_ref = app.bot
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
+    app.add_handler(MessageHandler(filters.PHOTO, handle_image))
+    app.add_handler(MessageHandler(filters.VOICE, handle_voice))
 
-    print("[JARVIS Cloud] 🟢 Bot iniciado.")
+    print("[JARVIS Cloud] 🟢 Bot iniciado com suporte a texto, imagem e voz.")
     app.run_polling(drop_pending_updates=True)
 
 # ---------------------------------------------------------------------------
