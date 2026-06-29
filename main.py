@@ -404,8 +404,7 @@ def run_bot() -> None:
             await update.message.reply_text("Não consegui entender o áudio, senhor. Poderia repetir?")
             return
 
-        print(f"[Telegram] 🎤 Transcrito: {transcribed!r}")
-        await update.message.reply_text(f"_{transcribed}_", parse_mode="Markdown")
+      
 
         reply = await loop.run_in_executor(None, process_message, chat_id, transcribed)
         if reply:
