@@ -23,8 +23,6 @@ from actions.reminder    import reminder, set_reminder_callback
 from actions.code_helper import code_helper
 from actions.gmail       import gmail_action
 
-threading.Thread(target=start_server, daemon=True).start()
-
 # ---------------------------------------------------------------------------
 # Config
 # ---------------------------------------------------------------------------
@@ -337,6 +335,7 @@ def _send_to_telegram(text: str) -> None:
         print(f"[Reminder] Erro ao enviar: {e}")
 
 def run_bot() -> None:
+    threading.Thread(target=start_server, daemon=True).start()
     global _bot_ref, _owner_chat_id
 
     try:
