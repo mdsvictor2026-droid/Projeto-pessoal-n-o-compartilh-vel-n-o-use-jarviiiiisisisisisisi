@@ -20,7 +20,7 @@ def code_helper(parameters: dict | None = None, **_: Any) -> str:
         if code:
             prompt += f"\n\nExisting code:\n```{language}\n{code}\n```"
         response = client.models.generate_content(  # type: ignore[attr-defined]
-            model="gemini-2.0-flash",
+            model="gemini-2.5-flash",
             contents=prompt
         )
         return response.text or "Sem resposta do modelo."

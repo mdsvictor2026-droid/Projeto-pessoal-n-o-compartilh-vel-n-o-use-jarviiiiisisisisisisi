@@ -33,7 +33,7 @@ from actions.gmail       import gmail_action
 
 BASE_DIR    = Path(__file__).resolve().parent
 PROMPT_PATH = BASE_DIR / "config" / "prompt.txt"
-MODEL       = "gemini-2.0-flash-lite"
+MODEL       = "gemini-2.5-flash"
 
 def _cfg() -> dict:
     return {
