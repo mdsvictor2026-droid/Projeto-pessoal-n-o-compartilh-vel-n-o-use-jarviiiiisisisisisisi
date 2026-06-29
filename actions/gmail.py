@@ -1,6 +1,6 @@
-"""actions/gmail.py — Gmail (mesma versão do Jarvis local)"""
+"""actions/gmail.py — Gmail com summarize, suggest_reply e categorize"""
 from __future__ import annotations
-import base64, json, sys
+import base64, os
 from email.mime.text import MIMEText
 from pathlib import Path
 from typing import Any
@@ -49,6 +49,19 @@ def _decode_body(payload):
                     break
     return body.strip()
 
+def _gemini_analyze(prompt: str) -> str:
+    try:
+        from google import genai
+        key = os.environ["GEMINI_API_KEY"]
+        client = genai.Client(api_key=key)
+        response = client.models.generate_content(
+            model="gemini-2.5-flash",
+            contents=prompt
+        )
+        return response.text or ""
+    except Exception as e:
+        return f"Erro na análise: {e}"
+
 def gmail_action(parameters: dict | None = None, **_: Any) -> str:
     params     = parameters or {}
     action     = params.get("action", "read")
@@ -72,7 +85,8 @@ def gmail_action(parameters: dict | None = None, **_: Any) -> str:
                 msg     = svc.users().messages().get(userId="me", id=ref["id"], format="full").execute()
                 headers = msg["payload"].get("headers", [])
                 summaries.append(
-                    f"{i}. De: {_header(headers,'From')}\n"
+                    f"{i}. ID: {ref['id']}\n"
+                    f"   De: {_header(headers,'From')}\n"
                     f"   Assunto: {_header(headers,'Subject')}\n"
                     f"   Data: {_header(headers,'Date')}\n"
                     f"   Prévia: {msg.get('snippet','')[:120]}"
@@ -124,6 +138,56 @@ def gmail_action(parameters: dict | None = None, **_: Any) -> str:
                 return "Preciso do message_id, senhor."
             svc.users().messages().modify(userId="me", id=message_id, body={"removeLabelIds":["UNREAD"]}).execute()
             return "Email marcado como lido, senhor."
+
+        elif action == "summarize":
+            if not message_id:
+                return "Preciso do message_id, senhor."
+            msg     = svc.users().messages().get(userId="me", id=message_id, format="full").execute()
+            headers = msg["payload"].get("headers", [])
+            body_text = _decode_body(msg["payload"])
+            prompt = (
+                f"Resuma este email de forma clara e objetiva em português. "
+                f"Destaque os pontos principais e qualquer ação necessária.\n\n"
+                f"De: {_header(headers,'From')}\n"
+                f"Assunto: {_header(headers,'Subject')}\n\n"
+                f"{body_text[:3000]}"
+            )
+            return _gemini_analyze(prompt)
+
+        elif action == "suggest_reply":
+            if not message_id:
+                return "Preciso do message_id, senhor."
+            msg     = svc.users().messages().get(userId="me", id=message_id, format="full").execute()
+            headers = msg["payload"].get("headers", [])
+            body_text = _decode_body(msg["payload"])
+            prompt = (
+                f"Sugira uma resposta profissional e educada para este email, em português. "
+                f"Seja conciso e direto.\n\n"
+                f"De: {_header(headers,'From')}\n"
+                f"Assunto: {_header(headers,'Subject')}\n\n"
+                f"{body_text[:3000]}"
+            )
+            return _gemini_analyze(prompt)
+
+        elif action == "categorize":
+            results  = svc.users().messages().list(userId="me", q=query, maxResults=count).execute()
+            messages = results.get("messages", [])
+            if not messages:
+                return "Nenhum email encontrado, senhor."
+            emails_text = []
+            for ref in messages:
+                msg     = svc.users().messages().get(userId="me", id=ref["id"], format="full").execute()
+                headers = msg["payload"].get("headers", [])
+                emails_text.append(
+                    f"ID: {ref['id']} | De: {_header(headers,'From')} | "
+                    f"Assunto: {_header(headers,'Subject')} | Prévia: {msg.get('snippet','')[:100]}"
+                )
+            prompt = (
+                f"Categorize estes emails em grupos como: Trabalho, Pessoal, Promoções, "
+                f"Notificações, Urgente, Newsletter, Financeiro, etc. "
+                f"Responda em português de forma organizada.\n\n" + "\n".join(emails_text)
+            )
+            return _gemini_analyze(prompt)
 
         else:
             return f"Ação desconhecida: {action}"

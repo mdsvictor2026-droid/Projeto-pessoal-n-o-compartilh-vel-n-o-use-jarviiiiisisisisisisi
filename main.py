@@ -1,11 +1,5 @@
 """
 jarvis-cloud/main.py — JARVIS Cloud Edition
-Interface exclusiva via Telegram bot. Sem UI, sem áudio, sem dependências locais.
-
-Requires:
-    pip install google-genai python-telegram-bot duckduckgo-search requests
-    pip install google-auth google-auth-oauthlib google-auth-httplib2 google-api-python-client
-    pip install pydub SpeechRecognition
 """
 
 from __future__ import annotations
@@ -14,7 +8,6 @@ import asyncio
 import io
 import os
 import sys
-import tempfile
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Optional
@@ -56,17 +49,17 @@ def _prompt() -> str:
         )
 
 # ---------------------------------------------------------------------------
-# Tool declarations
+# Tools
 # ---------------------------------------------------------------------------
 
 TOOLS = [
     {
         "name": "web_search",
-        "description": "Pesquisa na internet por notícias, informações atuais, fatos, preços, eventos, etc.",
+        "description": "Pesquisa na internet. Use para notícias, fatos atuais, preços, eventos. Também use para buscar e resumir o conteúdo de URLs específicas.",
         "parameters": {
             "type": "OBJECT",
             "properties": {
-                "query": {"type": "STRING", "description": "Termo de busca"},
+                "query": {"type": "STRING", "description": "Termo de busca ou URL"},
                 "count": {"type": "INTEGER", "description": "Número de resultados (padrão: 5)"},
             },
             "required": ["query"]
@@ -85,7 +78,7 @@ TOOLS = [
     },
     {
         "name": "reminder",
-        "description": "Define um lembrete que será enviado ao usuário pelo Telegram após o tempo especificado.",
+        "description": "Define um lembrete enviado pelo Telegram após o tempo especificado.",
         "parameters": {
             "type": "OBJECT",
             "properties": {
@@ -98,30 +91,31 @@ TOOLS = [
     },
     {
         "name": "gmail",
-        "description": "Gerencia emails do Gmail: ler, enviar, responder, marcar como lido, ver detalhes.",
+        "description": "Gerencia emails: ler, enviar, responder, resumir, sugerir resposta, organizar por categoria.",
         "parameters": {
             "type": "OBJECT",
             "properties": {
-                "action":     {"type": "STRING",  "description": "read | send | reply | detail | mark_read"},
+                "action":     {"type": "STRING",  "description": "read | send | reply | detail | mark_read | summarize | suggest_reply | categorize"},
                 "count":      {"type": "INTEGER", "description": "Quantidade de emails (padrão: 5)"},
                 "query":      {"type": "STRING",  "description": "Filtro Gmail (padrão: is:unread)"},
                 "to":         {"type": "STRING",  "description": "Destinatário (send)"},
                 "subject":    {"type": "STRING",  "description": "Assunto (send)"},
                 "body":       {"type": "STRING",  "description": "Corpo do email (send/reply)"},
-                "message_id": {"type": "STRING",  "description": "ID da mensagem (reply/detail/mark_read)"},
+                "message_id": {"type": "STRING",  "description": "ID da mensagem (reply/detail/mark_read/summarize/suggest_reply)"},
             },
             "required": ["action"]
         }
     },
     {
         "name": "code_helper",
-        "description": "Ajuda com código: escrever, explicar, corrigir, refatorar.",
+        "description": "Ajuda com código: escrever, explicar, corrigir, refatorar, revisar, gerar testes unitários, comparar versões.",
         "parameters": {
             "type": "OBJECT",
             "properties": {
-                "task":     {"type": "STRING", "description": "Descrição do que precisa fazer"},
+                "task":     {"type": "STRING", "description": "Descrição da tarefa (refactor | review | test | compare | write | explain | fix)"},
                 "language": {"type": "STRING", "description": "Linguagem de programação (padrão: Python)"},
                 "code":     {"type": "STRING", "description": "Código existente (opcional)"},
+                "code2":    {"type": "STRING", "description": "Segunda versão do código para comparação (opcional)"},
             },
             "required": ["task"]
         }
@@ -134,7 +128,7 @@ TOOLS = [
 ]
 
 # ---------------------------------------------------------------------------
-# Conversation memory (per-chat, in-memory)
+# Conversation memory
 # ---------------------------------------------------------------------------
 
 _histories: dict[str, list[dict]] = {}
@@ -149,6 +143,9 @@ def _add_to_history(chat_id: str, role: str, text: str) -> None:
     h.append({"role": role, "parts": [{"text": text}]})
     if len(h) > 30:
         _histories[chat_id] = h[-30:]
+
+def _clear_history(chat_id: str) -> None:
+    _histories[chat_id] = []
 
 # ---------------------------------------------------------------------------
 # Tool executor
@@ -176,7 +173,7 @@ def _execute_tool(name: str, args: dict) -> str:
         return f"Erro na ferramenta {name}: {e}"
 
 # ---------------------------------------------------------------------------
-# Gemini handler — texto
+# Gemini — texto
 # ---------------------------------------------------------------------------
 
 def process_message(chat_id: str, user_text: str) -> str:
@@ -201,9 +198,7 @@ def process_message(chat_id: str, user_text: str) -> str:
     for _ in range(5):
         try:
             response = client.models.generate_content(
-                model=MODEL,
-                contents=contents,
-                config=tool_config,
+                model=MODEL, contents=contents, config=tool_config,
             )
         except Exception as e:
             err = str(e)
@@ -234,8 +229,7 @@ def process_message(chat_id: str, user_text: str) -> str:
             fn_responses.append(
                 types.Part(
                     function_response=types.FunctionResponse(
-                        name=fc.name,
-                        response={"result": result}
+                        name=fc.name, response={"result": result}
                     )
                 )
             )
@@ -244,14 +238,13 @@ def process_message(chat_id: str, user_text: str) -> str:
     return "Desculpe, senhor. Não consegui processar sua solicitação."
 
 # ---------------------------------------------------------------------------
-# Gemini handler — imagem
+# Gemini — imagem
 # ---------------------------------------------------------------------------
 
 def process_image(chat_id: str, image_bytes: bytes, mime_type: str, caption: str = "") -> str:
     cfg    = _cfg()
     client = genai.Client(api_key=cfg["gemini_api_key"])
-
-    prompt_text = caption if caption else "Analise esta imagem detalhadamente e descreva o que você vê."
+    prompt = caption if caption else "Analise esta imagem detalhadamente. Se houver texto, extraia-o. Descreva tudo que vê."
 
     try:
         response = client.models.generate_content(
@@ -259,34 +252,59 @@ def process_image(chat_id: str, image_bytes: bytes, mime_type: str, caption: str
             contents=[
                 types.Content(parts=[
                     types.Part(inline_data=types.Blob(mime_type=mime_type, data=image_bytes)),
-                    types.Part(text=prompt_text),
+                    types.Part(text=prompt),
                 ])
             ],
             config=types.GenerateContentConfig(system_instruction=_prompt()),
         )
         reply = response.text or "Não consegui analisar a imagem, senhor."
-        _add_to_history(chat_id, "user", f"[Imagem enviada] {prompt_text}")
+        _add_to_history(chat_id, "user", f"[Imagem enviada] {prompt}")
         _add_to_history(chat_id, "model", reply)
         return reply
     except Exception as e:
         return f"Erro ao processar imagem: {e}"
 
 # ---------------------------------------------------------------------------
+# Gemini — PDF
+# ---------------------------------------------------------------------------
+
+def process_pdf(chat_id: str, pdf_bytes: bytes, caption: str = "") -> str:
+    cfg    = _cfg()
+    client = genai.Client(api_key=cfg["gemini_api_key"])
+    prompt = caption if caption else "Resuma este documento de forma clara e objetiva. Destaque os pontos mais importantes."
+
+    try:
+        response = client.models.generate_content(
+            model=MODEL,
+            contents=[
+                types.Content(parts=[
+                    types.Part(inline_data=types.Blob(mime_type="application/pdf", data=pdf_bytes)),
+                    types.Part(text=prompt),
+                ])
+            ],
+            config=types.GenerateContentConfig(system_instruction=_prompt()),
+        )
+        reply = response.text or "Não consegui analisar o PDF, senhor."
+        _add_to_history(chat_id, "user", f"[PDF enviado] {prompt}")
+        _add_to_history(chat_id, "model", reply)
+        return reply
+    except Exception as e:
+        return f"Erro ao processar PDF: {e}"
+
+# ---------------------------------------------------------------------------
 # Transcrição de voz
 # ---------------------------------------------------------------------------
 
 def transcribe_audio(audio_bytes: bytes) -> str:
-    """Transcreve áudio usando a própria API do Gemini."""
     try:
         cfg    = _cfg()
         client = genai.Client(api_key=cfg["gemini_api_key"])
-
         response = client.models.generate_content(
             model=MODEL,
             contents=[
                 types.Content(parts=[
                     types.Part(inline_data=types.Blob(mime_type="audio/ogg", data=audio_bytes)),
-                    types.Part(text="Transcreva exatamente o que foi dito neste áudio. Retorne apenas a transcrição, sem comentários adicionais."),
+                    types.Part(text="Transcreva exatamente o que foi dito neste áudio. Retorne apenas a transcrição, sem comentários."),
                 ])
             ],
         )
@@ -319,7 +337,7 @@ def run_bot() -> None:
 
     try:
         from telegram import Update
-        from telegram.ext import Application, MessageHandler, filters, ContextTypes
+        from telegram.ext import Application, MessageHandler, CommandHandler, filters, ContextTypes
     except ImportError:
         print("❌ python-telegram-bot não instalado.")
         sys.exit(1)
@@ -329,23 +347,57 @@ def run_bot() -> None:
 
     set_reminder_callback(_send_to_telegram)
 
+    # --- Comandos ---
+
+    async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        await update.message.reply_text(
+            "🤖 *JARVIS Cloud Online*\n\n"
+            "Estou pronto para auxiliá-lo, senhor.\n\n"
+            "Use /help para ver os comandos disponíveis.",
+            parse_mode="Markdown"
+        )
+
+    async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        await update.message.reply_text(
+            "📋 *Comandos disponíveis:*\n\n"
+            "/start — Iniciar o bot\n"
+            "/help — Esta mensagem\n"
+            "/clear — Limpar histórico da conversa\n\n"
+            "📎 *Também aceito:*\n"
+            "• Mensagens de texto\n"
+            "• Imagens (com ou sem legenda)\n"
+            "• Áudios de voz\n"
+            "• Documentos PDF\n"
+            "• Links para resumir\n\n"
+            "🔧 *Ferramentas disponíveis:*\n"
+            "• Pesquisa web\n"
+            "• Clima\n"
+            "• Gmail\n"
+            "• Lembretes\n"
+            "• Ajuda com código",
+            parse_mode="Markdown"
+        )
+
+    async def cmd_clear(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        chat_id = str(update.effective_chat.id)
+        _clear_history(chat_id)
+        await update.message.reply_text("Histórico limpo, senhor. Podemos começar do zero.")
+
+    # --- Mensagens ---
+
     async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         global _owner_chat_id
         if not update.message or not update.message.text:
             return
-
         chat_id = str(update.effective_chat.id)
         if not _owner_chat_id:
             _owner_chat_id = chat_id
-
         user_text = update.message.text
         sender    = update.message.from_user.first_name if update.message.from_user else "?"
         print(f"[Telegram] 📨 {sender}: {user_text!r}")
-
         await context.bot.send_chat_action(chat_id=chat_id, action="typing")
         loop  = asyncio.get_running_loop()
         reply = await loop.run_in_executor(None, process_message, chat_id, user_text)
-
         if reply:
             for i in range(0, len(reply), 4000):
                 await update.message.reply_text(reply[i:i+4000])
@@ -354,26 +406,18 @@ def run_bot() -> None:
         global _owner_chat_id
         if not update.message:
             return
-
         chat_id = str(update.effective_chat.id)
         if not _owner_chat_id:
             _owner_chat_id = chat_id
-
         caption = update.message.caption or ""
         await context.bot.send_chat_action(chat_id=chat_id, action="typing")
-
-        # Pega a foto em maior resolução
         photo = update.message.photo[-1]
         file  = await context.bot.get_file(photo.file_id)
         buf   = io.BytesIO()
         await file.download_to_memory(buf)
-        image_bytes = buf.getvalue()
-
-        print(f"[Telegram] 🖼️ Imagem recebida ({len(image_bytes)} bytes)")
-
+        print(f"[Telegram] 🖼️ Imagem recebida ({len(buf.getvalue())} bytes)")
         loop  = asyncio.get_running_loop()
-        reply = await loop.run_in_executor(None, process_image, chat_id, image_bytes, "image/jpeg", caption)
-
+        reply = await loop.run_in_executor(None, process_image, chat_id, buf.getvalue(), "image/jpeg", caption)
         if reply:
             for i in range(0, len(reply), 4000):
                 await update.message.reply_text(reply[i:i+4000])
@@ -382,47 +426,60 @@ def run_bot() -> None:
         global _owner_chat_id
         if not update.message:
             return
-
         chat_id = str(update.effective_chat.id)
         if not _owner_chat_id:
             _owner_chat_id = chat_id
-
         await context.bot.send_chat_action(chat_id=chat_id, action="typing")
-
-        voice = update.message.voice
-        file  = await context.bot.get_file(voice.file_id)
-        buf   = io.BytesIO()
+        file = await context.bot.get_file(update.message.voice.file_id)
+        buf  = io.BytesIO()
         await file.download_to_memory(buf)
-        audio_bytes = buf.getvalue()
-
-        print(f"[Telegram] 🎤 Áudio recebido ({len(audio_bytes)} bytes)")
-
+        print(f"[Telegram] 🎤 Áudio recebido ({len(buf.getvalue())} bytes)")
         loop        = asyncio.get_running_loop()
-        transcribed = await loop.run_in_executor(None, transcribe_audio, audio_bytes)
-
+        transcribed = await loop.run_in_executor(None, transcribe_audio, buf.getvalue())
         if not transcribed:
             await update.message.reply_text("Não consegui entender o áudio, senhor. Poderia repetir?")
             return
-
-      
-
         reply = await loop.run_in_executor(None, process_message, chat_id, transcribed)
+        if reply:
+            for i in range(0, len(reply), 4000):
+                await update.message.reply_text(reply[i:i+4000])
+
+    async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        global _owner_chat_id
+        if not update.message or not update.message.document:
+            return
+        chat_id = str(update.effective_chat.id)
+        if not _owner_chat_id:
+            _owner_chat_id = chat_id
+        doc     = update.message.document
+        caption = update.message.caption or ""
+        if not doc.mime_type or "pdf" not in doc.mime_type:
+            await update.message.reply_text("Por enquanto só consigo analisar arquivos PDF, senhor.")
+            return
+        await context.bot.send_chat_action(chat_id=chat_id, action="typing")
+        file = await context.bot.get_file(doc.file_id)
+        buf  = io.BytesIO()
+        await file.download_to_memory(buf)
+        print(f"[Telegram] 📄 PDF recebido ({buf.tell()} bytes)")
+        loop  = asyncio.get_running_loop()
+        reply = await loop.run_in_executor(None, process_pdf, chat_id, buf.getvalue(), caption)
         if reply:
             for i in range(0, len(reply), 4000):
                 await update.message.reply_text(reply[i:i+4000])
 
     app = Application.builder().token(token).build()
     _bot_ref = app.bot
+
+    app.add_handler(CommandHandler("start", cmd_start))
+    app.add_handler(CommandHandler("help",  cmd_help))
+    app.add_handler(CommandHandler("clear", cmd_clear))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
-    app.add_handler(MessageHandler(filters.PHOTO, handle_image))
-    app.add_handler(MessageHandler(filters.VOICE, handle_voice))
+    app.add_handler(MessageHandler(filters.PHOTO,        handle_image))
+    app.add_handler(MessageHandler(filters.VOICE,        handle_voice))
+    app.add_handler(MessageHandler(filters.Document.ALL, handle_document))
 
-    print("[JARVIS Cloud] 🟢 Bot iniciado com suporte a texto, imagem e voz.")
+    print("[JARVIS Cloud] 🟢 Bot iniciado com suporte a texto, imagem, voz e PDF.")
     app.run_polling(drop_pending_updates=True)
-
-# ---------------------------------------------------------------------------
-# Entry point
-# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     run_bot()
