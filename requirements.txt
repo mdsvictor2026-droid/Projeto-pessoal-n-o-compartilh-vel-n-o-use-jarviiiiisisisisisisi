@@ -1,0 +1,8 @@
+google-genai
+python-telegram-bot
+duckduckgo-search
+requests
+google-auth
+google-auth-oauthlib
+google-auth-httplib2
+google-api-python-client
