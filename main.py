@@ -3,9 +3,7 @@ jarvis-cloud/main.py — JARVIS Cloud Edition
 """
 
 from __future__ import annotations
-import threading
 
-from server import start_server
 import asyncio
 import io
 import os
@@ -335,7 +333,6 @@ def _send_to_telegram(text: str) -> None:
         print(f"[Reminder] Erro ao enviar: {e}")
 
 def run_bot() -> None:
-    threading.Thread(target=start_server, daemon=True).start()
     global _bot_ref, _owner_chat_id
 
     try:
